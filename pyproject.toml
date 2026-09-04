@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-cost-control"
+version = "0.1.0"
+description = "Bounds AI agent execution cost before it runs — pre-execution estimation, model routing, semantic caching, and hard budget ceilings. Measured on cost variance, not mean."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+anthropic = ["anthropic>=0.40"]
+
+[project.scripts]
+agent-cost-control = "agent_cost_control.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
