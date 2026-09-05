@@ -19,7 +19,8 @@ import pytest
 
 from agent_cost_control.budget import CeilingPolicy
 from agent_cost_control.cache import SemanticCache, jaccard, normalize
-from agent_cost_control.catalog import MODELS, build_tasks, split_tasks
+from agent_cost_control.catalog import (CATEGORIES, MODELS, build_tasks,
+                                        split_tasks)
 from agent_cost_control.control import ControlConfig, Controller
 from agent_cost_control.estimate import Estimator, History, cost_of_steps
 from agent_cost_control.executor import SimulatedExecutor, step_success_probability
@@ -453,3 +454,210 @@ def test_table_renders_with_no_rows():
     """Regression: max() over a single int raised TypeError on an empty table."""
     from agent_cost_control.cli import _table
     assert "ceiling" in _table(["ceiling", "total"], [])
+
+
+# ------------------------------------------------- catalog is data, not code
+def test_catalog_rejects_an_incoherent_table():
+    """A ladder out of price order or naming a missing model fails at load.
+
+    Validated where the table is read rather than deep inside routing, which is
+    a long way from the typo that caused it.
+    """
+    import json
+    import tempfile
+
+    from agent_cost_control.catalog import load_catalog, read_catalog
+
+    document = read_catalog()
+    document["ladder"] = ["frontier", "small"]          # not cheapest first
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(document, fh)
+        path = fh.name
+    with pytest.raises(ValueError):
+        load_catalog(path)
+    load_catalog()                                       # restore the default
+
+
+def test_conclusions_survive_a_different_price_table():
+    """Prices are an input, and the findings must not depend on the snapshot.
+
+    The whole ablation is re-run against a table with different absolute prices
+    but a comparable spread between tiers. Dollar figures move; the ordering
+    the project reports must not.
+    """
+    import json
+    import tempfile
+
+    from agent_cost_control.bench import run_benchmark
+    from agent_cost_control.catalog import load_catalog, read_catalog
+
+    document = read_catalog()
+    for spec in document["models"].values():             # halve every price
+        spec["input_usd_per_mtok"] /= 2
+        spec["output_usd_per_mtok"] /= 2
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(document, fh)
+        path = fh.name
+
+    # The ceiling is an absolute dollar amount, so it has to be halved too --
+    # otherwise cheaper tokens buy more steps and the arms are not comparable.
+    try:
+        load_catalog(path)
+        cheap = run_benchmark(task_count=240, warmup=80, ceiling_usd=0.075)
+    finally:
+        load_catalog()
+    default = run_benchmark(task_count=240, warmup=80, ceiling_usd=0.15)
+
+    for arm in (cheap, default):
+        assert arm[-1].cost_per_solved < arm[0].cost_per_solved
+        assert arm[-1].executed_p99_usd < arm[0].executed_p99_usd
+
+    for halved, full in zip(cheap, default):
+        # Identical decisions, so identical quality: only the bill changed.
+        assert halved.solve_rate == full.solve_rate
+        assert halved.total_usd == pytest.approx(full.total_usd / 2, rel=1e-9)
+
+
+# --------------------------------------------- capability is per-category
+def test_capability_is_not_a_single_ordering():
+    """The cheap model is nearly adequate somewhere and hopeless elsewhere.
+
+    With scalar capability there is one correct model for every task and
+    routing per category is pointless. The gap between tiers has to differ by
+    category for the router to have a decision to make.
+    """
+    gaps = {}
+    for category, _centre, _template in CATEGORIES:
+        small = MODELS["small"].capability_for(category)
+        frontier = MODELS["frontier"].capability_for(category)
+        gaps[category] = frontier - small
+
+    assert min(gaps.values()) < 0.35 < max(gaps.values()), gaps
+    # And no model is a scalar in disguise.
+    assert len({round(MODELS["small"].capability_for(c), 3) for c in gaps}) > 1
+
+
+def test_routing_chooses_different_models_for_different_categories():
+    """The payoff of per-category capability, measured end to end."""
+    warm, measured = split_tasks(build_tasks(), warmup=120)
+    controller = Controller(ControlConfig(caching=False))
+    controller.warm(warm)
+
+    chosen = {}
+    for task in measured:
+        chosen.setdefault(task.category, set()).add(controller.router.select(task))
+    picked = {next(iter(v)) for v in chosen.values() if len(v) == 1}
+    assert len(picked) > 1, f"one model won every category: {chosen}"
+
+
+# ------------------------------------------------ cache accounting is honest
+def test_cache_hit_rate_tracks_the_configured_repeat_rate():
+    """The hit rate is an input, not a property of the fixture.
+
+    If it emerged from how many template and subject combinations happened to
+    collide, the cache row would be unfalsifiable: nobody could separate the
+    control's value from the corpus's luck.
+    """
+    from agent_cost_control.bench import run_benchmark
+
+    for repeat_rate in (0.0, 0.25, 0.50):
+        report = run_benchmark(task_count=320, warmup=100,
+                               repeat_rate=repeat_rate)[-1]
+        assert abs(report.cache_hit_rate - repeat_rate) < 0.12, (
+            f"repeat_rate={repeat_rate} gave {report.cache_hit_rate:.2f}")
+
+
+def test_cache_hits_do_not_inflate_the_reported_solve_rate():
+    """``solve_rate_executed`` is the figure a cache cannot lift.
+
+    A hit returns a real answer, so it counts as solved -- but it was solved by
+    an earlier run, and without the second figure any arm could raise its
+    headline quality by repeating itself.
+    """
+    from agent_cost_control.bench import run_benchmark
+
+    report = run_benchmark(task_count=320, warmup=100, repeat_rate=0.50)[-1]
+    assert report.cache_hit_rate > 0.3
+    assert report.solve_rate_executed < report.solve_rate
+    assert report.solve_rate_executed > 0.5
+
+
+# --------------------------------------- estimation uses more than category
+def test_prompt_size_carries_signal_but_not_on_its_own():
+    """Longer asks describe bigger jobs, weakly enough to need the category.
+
+    A perfect correlation would make the category redundant; none would make
+    the size split noise. The estimator's backoff exists because it is neither.
+    """
+    import statistics
+
+    tasks = build_tasks(count=600, repeat_rate=0.0)
+    sizes = [t.prompt_tokens for t in tasks]
+    hardness = [t.difficulty for t in tasks]
+    correlation = statistics.correlation(sizes, hardness)
+    assert 0.4 < correlation < 0.95, correlation
+
+
+def test_conditioning_on_scope_earns_its_place():
+    """The second feature is measured rather than assumed.
+
+    Both estimators see identical history. The gain is real but small, and the
+    reason is the point of the project: cost varies mostly because step count
+    is stochastic, not because scope was unmeasured. Nominal interval coverage
+    is 80%, so moving toward it is the improvement, not away from it.
+    """
+    from agent_cost_control.bench import Report
+
+    def score(size_aware: bool) -> tuple[float, float]:
+        warm, measured = split_tasks(build_tasks(), warmup=120)
+        controller = Controller(ControlConfig(caching=False, ceiling=False),
+                                size_aware=size_aware)
+        controller.warm(warm)
+        report = Report(config=str(size_aware))
+        for task in measured:
+            report.attempts.append(controller.run(task))
+        executed = [a for a in report.attempts if a.steps]
+        error = sum(abs(a.estimated_usd - a.cost_usd) for a in executed) / len(executed)
+        return error, report.estimate_coverage
+
+    coarse_error, coarse_coverage = score(False)
+    fine_error, fine_coverage = score(True)
+
+    assert fine_error < coarse_error, (fine_error, coarse_error)
+    assert abs(fine_coverage - 0.80) <= abs(coarse_coverage - 0.80), (
+        fine_coverage, coarse_coverage)
+
+
+def test_thin_history_falls_back_to_the_whole_category():
+    """Conditioning on scope divides a category's evidence.
+
+    An estimator that trusted a handful of neighbours would be confidently
+    wrong exactly where the ceiling depends on it, so the neighbourhood is only
+    used once the category has enough history to spare.
+    """
+    from agent_cost_control.estimate import MIN_NEIGHBOURS
+
+    task = Task("t", "lookup", "find the thing", 0.3, prompt_tokens=300)
+    history = History()
+    history.steps[("lookup", "small")] = [3] * 40
+    history.samples[("lookup", "small")] = [(300, 11)] * (2 * MIN_NEIGHBOURS - 1)
+
+    estimator = Estimator(history)
+    assert estimator.estimate(task, "small").expected_steps == 3.0
+
+    history.samples[("lookup", "small")] = [(300, 11)] * (2 * MIN_NEIGHBOURS)
+    assert estimator.estimate(task, "small").expected_steps == 11.0
+
+
+def test_the_neighbourhood_tracks_the_task_rather_than_a_fixed_boundary():
+    """Nearest neighbours, not absolute size bands.
+
+    Scope drives prompt length and category together, so a boundary drawn in
+    absolute tokens separates categories instead of splitting one, and the
+    band degenerates into the category under another name.
+    """
+    from agent_cost_control.estimate import MIN_NEIGHBOURS, nearest_by_size
+
+    samples = [(200, 2)] * MIN_NEIGHBOURS + [(1000, 12)] * MIN_NEIGHBOURS
+    assert set(nearest_by_size(samples, 210)) == {2}
+    assert set(nearest_by_size(samples, 990)) == {12}

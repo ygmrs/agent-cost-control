@@ -42,18 +42,27 @@ class Outcome(str, Enum):
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """A model's capability and price.
+    """A model's price and its capability profile.
 
-    ``capability`` is a scalar in [0, 1]. It is a deliberate simplification --
-    real capability is task-dependent -- but it is the minimum needed to express
-    the trade the router exists to make: a cheaper model needs more steps, and
-    more steps cost superlinearly, so "cheaper per token" does not imply
-    "cheaper per task". The benchmark shows where that flips.
+    Capability is held per task category rather than as one number, because a
+    model is not uniformly strong: the cheap tier handles mechanical lookups
+    nearly as well as the frontier tier and collapses on migrations, so the gap
+    between tiers is different in every category. A scalar would average those
+    apart and make the router's job look easier than it is -- with a single
+    number there is one correct ordering of models everywhere, and choosing per
+    category would be pointless.
+
+    ``capability`` is the fallback for a category with no entry, so adding a
+    category does not require editing every model.
     """
     name: str
     capability: float
     input_usd_per_mtok: float
     output_usd_per_mtok: float
+    capability_by_category: dict[str, float] = field(default_factory=dict)
+
+    def capability_for(self, category: str) -> float:
+        return self.capability_by_category.get(category, self.capability)
 
     def step_cost(self, input_tokens: int, output_tokens: int) -> float:
         return (input_tokens * self.input_usd_per_mtok / 1e6

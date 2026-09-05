@@ -24,3 +24,6 @@ pythonpath = ["src"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+agent_cost_control = ["model_catalog.json"]

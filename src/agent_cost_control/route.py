@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .catalog import DEFAULT_MODEL, LADDER
+from . import catalog
 from .estimate import MIN_OBSERVATIONS, Estimator
 from .models import Task
 
@@ -48,13 +48,13 @@ class Router:
         the models it probes are the cheap ones, and by the ceiling, which stops
         a probe that runs long. Once evidence exists the policy exploits it.
         """
-        for name in LADDER:
+        for name in catalog.LADDER:
             if self.estimator.history.observations(task.category, name) < self.min_observations:
                 return name
             rate = self.estimator.history.solve_rate(task.category, name)
             if rate is not None and rate >= self.target_solve_rate:
                 return name
-        return DEFAULT_MODEL
+        return catalog.DEFAULT_MODEL
 
     def escalate(self, current: str) -> str | None:
         """Next model up, or None at the top.
@@ -64,5 +64,6 @@ class Router:
         grind, because the strong model resolves in few steps and the quadratic
         works in its favour.
         """
-        index = LADDER.index(current)
-        return LADDER[index + 1] if index + 1 < len(LADDER) else None
+        ladder = catalog.LADDER
+        index = ladder.index(current)
+        return ladder[index + 1] if index + 1 < len(ladder) else None

@@ -1,0 +1,35 @@
+{
+  "_comment": "Model prices and capability profiles. Edit this file or pass --catalog FILE; no code change is needed to reprice or to add a tier.",
+  "_prices_as_of": "2026-08",
+  "ladder": ["small", "mid", "frontier"],
+  "default": "frontier",
+  "models": {
+    "small": {
+      "input_usd_per_mtok": 0.25,
+      "output_usd_per_mtok": 1.25,
+      "capability": 0.40,
+      "capability_by_category": {
+        "lookup": 0.60, "edit": 0.50, "bugfix": 0.38,
+        "refactor": 0.34, "integration": 0.30, "migration": 0.26
+      }
+    },
+    "mid": {
+      "input_usd_per_mtok": 1.00,
+      "output_usd_per_mtok": 5.00,
+      "capability": 0.62,
+      "capability_by_category": {
+        "lookup": 0.74, "edit": 0.68, "bugfix": 0.60,
+        "refactor": 0.62, "integration": 0.55, "migration": 0.50
+      }
+    },
+    "frontier": {
+      "input_usd_per_mtok": 3.75,
+      "output_usd_per_mtok": 18.75,
+      "capability": 0.82,
+      "capability_by_category": {
+        "lookup": 0.86, "edit": 0.84, "bugfix": 0.82,
+        "refactor": 0.80, "integration": 0.81, "migration": 0.83
+      }
+    }
+  }
+}

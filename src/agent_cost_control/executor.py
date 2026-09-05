@@ -65,11 +65,13 @@ def task_seed(task: Task) -> int:
 def step_success_probability(model: ModelSpec, task: Task) -> float:
     """Per-step probability that the agent resolves the task.
 
-    A logistic in (capability - difficulty). The shape matters more than the
+    A logistic in (capability - difficulty), where capability is the model's
+    strength *in this task's category*. The shape matters more than the
     constants: capability above difficulty resolves quickly, capability below it
     grinds, and the grinding is what costs money.
     """
-    exponent = SUCCESS_SLOPE * (model.capability - task.difficulty) - SUCCESS_OFFSET
+    exponent = (SUCCESS_SLOPE * (model.capability_for(task.category) - task.difficulty)
+                - SUCCESS_OFFSET)
     return 1.0 / (1.0 + math.exp(-exponent))
 
 

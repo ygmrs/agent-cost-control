@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .catalog import build_tasks, split_tasks
+from .catalog import DEFAULT_REPEAT_RATE, build_tasks, split_tasks
 from .control import ControlConfig, Controller
 from .models import Attempt, Outcome
 
@@ -80,6 +80,20 @@ class Report:
         return sum(1 for a in self.attempts if a.solved) / len(self.attempts)
 
     @property
+    def solve_rate_executed(self) -> float:
+        """Solve rate over tasks the system actually had to work on.
+
+        A cache hit returns a real answer, so it counts as solved in
+        ``solve_rate`` -- but it was solved by an earlier run, and letting those
+        accumulate would let any arm raise its headline quality by repeating
+        itself. Reported alongside so the two are never confused.
+        """
+        worked = [a for a in self.attempts if not a.cache_hit]
+        if not worked:
+            return 0.0
+        return sum(1 for a in worked if a.solved) / len(worked)
+
+    @property
     def refused(self) -> int:
         return sum(1 for a in self.attempts if a.outcome is Outcome.REFUSED)
 
@@ -132,7 +146,8 @@ def configurations(ceiling_usd: float = 0.15) -> list[ControlConfig]:
 
 
 def run_benchmark(task_count: int = 400, warmup: int = 120,
-                  ceiling_usd: float = 0.15) -> list[Report]:
+                  ceiling_usd: float = 0.15,
+                  repeat_rate: float = DEFAULT_REPEAT_RATE) -> list[Report]:
     """Score every configuration over the same tasks.
 
     Each arm gets a fresh controller so learned history does not leak between
@@ -141,7 +156,7 @@ def run_benchmark(task_count: int = 400, warmup: int = 120,
     are attributable to the controls rather than to which tasks happened to
     resolve early.
     """
-    tasks = build_tasks(count=task_count)
+    tasks = build_tasks(count=task_count, repeat_rate=repeat_rate)
     warm_tasks, measured = split_tasks(tasks, warmup=warmup)
 
     reports = []

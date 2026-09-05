@@ -25,7 +25,8 @@ from dataclasses import dataclass
 
 from .budget import CeilingPolicy
 from .cache import SemanticCache
-from .catalog import DEFAULT_MODEL, MODELS
+from . import catalog
+from .catalog import MODELS
 from .estimate import Estimator, History, first_step_cost
 from .executor import Executor, SimulatedExecutor
 from .models import Attempt, Outcome, Task
@@ -46,10 +47,11 @@ class ControlConfig:
 
 class Controller:
     def __init__(self, config: ControlConfig, executor: Executor | None = None,
-                 history: History | None = None):
+                 history: History | None = None, size_aware: bool = True):
         self.config = config
         self.executor = executor or SimulatedExecutor()
-        self.estimator = Estimator(history=history or History())
+        self.estimator = Estimator(history=history or History(),
+                                   size_aware=size_aware)
         self.router = Router(estimator=self.estimator,
                              target_solve_rate=config.target_solve_rate)
         self.cache = SemanticCache()
@@ -68,7 +70,7 @@ class Controller:
                                models_used=list(cached.models_used),
                                cache_hit=True)
 
-        model_name = self.router.select(task) if self.config.routing else DEFAULT_MODEL
+        model_name = self.router.select(task) if self.config.routing else catalog.DEFAULT_MODEL
 
         if self.config.ceiling:
             admitted, estimate = self.policy.admit(task, model_name)
